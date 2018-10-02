@@ -98,6 +98,7 @@ type Burner struct {
 	loop      bool
 	dump      bool
 	dumpFile  string
+	dialOpt   grpc.DialOption
 
 	pool   *pool
 	ctx    context.Context
@@ -109,25 +110,18 @@ func NewBurner(hosts []string, opts ...func(*Burner)) (*Burner, error) {
 		return nil, ErrNoGrpcHosts
 	}
 
-	p := &pool{}
-	for _, h := range hosts {
-		c, err := grpc.Dial(h, grpc.WithInsecure())
-		if err != nil {
-			return nil, fmt.Errorf("Dialing to [%s] failed: %v", h, err)
-		}
-		p.conns = append(p.conns, c)
-	}
-
 	b := &Burner{
-		pool:      p,
 		stopch:    make(chan struct{}),
 		numWorker: DefaultWorkers,
 		ctx:       context.Background(),
+		dialOpt:   grpc.WithInsecure(),
 	}
 
 	for _, opt := range opts {
 		opt(b)
 	}
+
+	b.initPool(hosts)
 
 	return b, nil
 }
@@ -148,6 +142,10 @@ func WithNumWorker(num uint64) func(*Burner) {
 
 func WithLooping(yesno bool) func(*Burner) {
 	return func(b *Burner) { b.loop = yesno }
+}
+
+func WithDialOpt(dialOpt grpc.DialOption) func(*Burner) {
+	return func(b *Burner) { b.dialOpt = dialOpt }
 }
 
 func WithDumpFile(fileName string) func(*Burner) {
@@ -179,6 +177,24 @@ func (b *Burner) WaitDumpDone() error {
 		return err
 	}
 	return nil
+}
+
+func (b *Burner) initPool(hosts []string) (*pool, error) {
+	if b.pool != nil {
+		return b.pool, nil
+	}
+
+	p := &pool{}
+	for _, h := range hosts {
+		c, err := grpc.Dial(h, b.dialOpt)
+		if err != nil {
+			return nil, fmt.Errorf("Dialing to [%s] failed: %v", h, err)
+		}
+		p.conns = append(p.conns, c)
+	}
+	b.pool = p
+
+	return b.pool, nil
 }
 
 func (b *Burner) Close() error {
